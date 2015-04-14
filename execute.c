@@ -24,6 +24,18 @@ pid_t fgPid;                     //当前前台作业的进程号
                   工具以及辅助方法
 ********************************************************/
 /*判断命令是否存在*/
+//F_OK这个变量表示文件存在(即00)
+//access函数原型：
+/*
+int   access(const   char   *filename,   int   amode); 
+amode参数为0时表示检查文件的存在性，如果文件存在，返回0，不存在，返回-1。 
+这个函数还可以检查其它文件属性： 
+06     检查读写权限 
+04     检查读权限 
+02     检查写权限 
+01     检查执行权限 
+00     检查文件的存在性
+*/
 int exists(char *cmdFile){
     int i = 0;
     if((cmdFile[0] == '/' || cmdFile[0] == '.') && access(cmdFile, F_OK) == 0){ //命令在当前目录
@@ -63,6 +75,8 @@ int str2Pid(char *str, int start, int end){
 }
 
 /*调整部分外部命令的格式*/
+//为什么要这么做？
+//只保留了最后‘/’之后的参数
 void justArgs(char *str){
     int i, j, len;
     len = strlen(str);
@@ -127,6 +141,8 @@ void rmJob(int sig, siginfo_t *sip, void* noused){
     pid_t pid;
     Job *now = NULL, *last = NULL;
     
+    //这个信号量的是值在哪儿修改为1:fg命令、bg命令、ctrl+Z命令
+    //这个信号量的作用？
     if(ingnore == 1){
         ingnore = 0;
         return;
@@ -177,7 +193,7 @@ void ctrl_Z(){
     strcpy(now->state, STOPPED); 
     now->cmd[strlen(now->cmd)] = '&';
     now->cmd[strlen(now->cmd) + 1] = '\0';
-    printf("[%d]\t%s\t\t%s\n", now->pid, now->state, now->cmd);
+    printf("\n[%d]\t%s\t\t%s\n", now->pid, now->state, now->cmd);
     
 	//发送SIGSTOP信号给正在前台运作的工作，将其停止
     kill(fgPid, SIGSTOP);
@@ -364,6 +380,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                 }
                 break;
 
+			//不明白的部分
             case '<': //输入重定向标志
                 if(j != 0){
 		    //此判断为防止命令直接挨着<符号导致判断为同一个参数，如果ls<sth
@@ -497,7 +514,7 @@ void execOuterCmd(SimpleCmd *cmd){
                     return;
                 }
             }
-            
+            //这一段代码不理解
             if(cmd->isBack){ //若是后台运行命令，等待父进程增加作业
                 signal(SIGUSR1, setGoon); //收到信号，setGoon函数将goon置1，以跳出下面的循环
                 while(goon == 0) ; //等待父进程SIGUSR1信号，表示作业已加到链表中
@@ -575,7 +592,7 @@ void execSimpleCmd(SimpleCmd *cmd){
                 fg_exec(pid);
             }
         }else{
-            printf("fg; 参数不合法，正确格式为：fg %<int>\n");
+            printf("fg; 参数不合法，正确格式为：fg %%<int>\n");
         }
     } else if (strcmp(cmd->args[0], "bg") == 0) { //bg命令
         temp = cmd->args[1];
@@ -587,7 +604,7 @@ void execSimpleCmd(SimpleCmd *cmd){
             }
         }
 		else{
-            printf("bg; 参数不合法，正确格式为：bg %<int>\n");
+            printf("bg; 参数不合法，正确格式为：bg %%<int>\n");
         }
     } else{ //外部命令
         execOuterCmd(cmd);
