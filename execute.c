@@ -14,6 +14,7 @@
 
 #include "global.h"
 #define DEBUG
+#define DEBUG_LJL
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
 History history;                 //历史命令
@@ -98,6 +99,9 @@ void justArgs(char *str){
 /*设置goon*/
 void setGoon(){
     goon = 1;
+	#ifdef DEBUG_LJL
+	printf("Value of the signal goon has been changed\n");
+	#endif
 }
 
 /*释放环境变量空间*/
@@ -366,6 +370,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
     k = 0;
     j = 0;
     fileFinished = 0;
+	//buff存的是命令的各个参数
     temp = buff[k]; //以下通过temp指针的移动实现对buff[i]的顺次赋值过程
     while(i < end){
 		/*根据命令字符的不同情况进行不同的处理*/
@@ -383,21 +388,24 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
 			//不明白的部分
             case '<': //输入重定向标志
                 if(j != 0){
-		    //此判断为防止命令直接挨着<符号导致判断为同一个参数，如果ls<sth
-                    temp[j] = '\0';
+		  		  	//此判断为防止命令直接挨着<符号导致判断为同一个参数，如果ls<sth
+					//这种情况就是命令后紧接着<字符                    
+					temp[j] = '\0';
                     j = 0;
                     if(!fileFinished){
                         k++;
                         temp = buff[k];
+						//是不是少了break语句?此处应该是接受下一个重定向的输入文件参数才对
                     }
                 }
-                temp = inputFile;
+                temp = inputFile;//这句是什么意思呢？无论格式是什么样，此处都将temp指向了输入文件
                 fileFinished = 1;
                 i++;
                 break;
                 
             case '>': //输出重定向标志
                 if(j != 0){
+				//命令后紧接着>符号的情况
                     temp[j] = '\0';
                     j = 0;
                     if(!fileFinished){
@@ -410,7 +418,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                 i++;
                 break;
                 
-            case '&': //后台运行标志
+            case '&': //后台运行标志，实现方法保证了无论&符号在命令前还是后，都能正确执行
                 if(j != 0){
                     temp[j] = '\0';
                     j = 0;
@@ -435,6 +443,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
         }
 	}
     
+	//这是在处理什么情况呢？
     if(inputBuff[end-1] != ' ' && inputBuff[end-1] != '\t' && inputBuff[end-1] != '&'){
         temp[j] = '\0';
         if(!fileFinished){
@@ -467,8 +476,8 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
     #ifdef DEBUG
     printf("****\n");
     printf("isBack: %d\n",cmd->isBack);
-    	for(i = 0; cmd->args[i] != NULL; i++){
-    		printf("args[%d]: %s\n",i,cmd->args[i]);
+    for(i = 0; cmd->args[i] != NULL; i++){
+    	printf("args[%d]: %s\n",i,cmd->args[i]);
 	}
     printf("input: %s\n",cmd->input);
     printf("output: %s\n",cmd->output);
@@ -484,16 +493,28 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
 void execOuterCmd(SimpleCmd *cmd){
     pid_t pid;
     int pipeIn, pipeOut;
-    
+   
+	#ifdef DEBUG_LJL
+		printf("In the function execOuterCmd\n");
+	#endif
     if(exists(cmd->args[0])){ //命令存在
 
-        if((pid = fork()) < 0){
+		pid = fork();
+        #ifdef DEBUG_LJL
+			printf("pid of child is %d\n",pid);
+		#endif
+        if(pid < 0){
             perror("fork failed");
             return;
         }
-        
+
         if(pid == 0){ //子进程
+			#ifdef DEBUG_LJL
+				printf("In the child\n");
+			#endif
             if(cmd->input != NULL){ //存在输入重定向
+				//S_IRUSR权限,代表该文件所有者具有可读取的权限.
+				//S_IWUSR权限,代表该文件所有者具有可写入的权限.为什么输入文件需要写入权限？
                 if((pipeIn = open(cmd->input, O_RDONLY, S_IRUSR|S_IWUSR)) == -1){
                     printf("不能打开文件 %s！\n", cmd->input);
                     return;
@@ -516,29 +537,51 @@ void execOuterCmd(SimpleCmd *cmd){
             }
             //这一段代码不理解
             if(cmd->isBack){ //若是后台运行命令，等待父进程增加作业
+				#ifdef DEBUG_LJL
+				printf("Into the if-statement\n");
+				#endif
                 signal(SIGUSR1, setGoon); //收到信号，setGoon函数将goon置1，以跳出下面的循环
                 while(goon == 0) ; //等待父进程SIGUSR1信号，表示作业已加到链表中
+				#ifdef DEBUG_LJL
+				printf("Out of the child's loop\n");
+				#endif
                 goon = 0; //置0，为下一命令做准备
                 
+				//后台命令的时候并没有这一行输出，问题是：没有子进程在运行
                 printf("[%d]\t%s\t\t%s\n", getpid(), RUNNING, inputBuff);
-                kill(getppid(), SIGUSR1);
+                kill(getppid(), SIGUSR1);//这里的函数是getppid()，是取得父进程的进程id，即这句是向父进程发送信号
+				#ifdef DEBUG_LJL
+				printf("Signal has been sent to father from child\n");
+				#endif
             }
             
-            justArgs(cmd->args[0]);
+            justArgs(cmd->args[0]);//修改第一个参数的格式，去掉'/'
             if(execv(cmdBuff, cmd->args) < 0){ //执行命令
                 printf("execv failed!\n");
                 return;
             }
         }
 		else{ //父进程
+		#ifdef DEBUG_LJL
+			printf("In the father\n");
+		#endif
             if(cmd ->isBack){ //后台命令             
-                fgPid = 0; //pid置0，为下一命令做准备
+                fgPid = 0; //fgPid置0，为下一命令做准备
                 addJob(pid); //增加新的作业
-                kill(pid, SIGUSR1); //子进程发信号，表示作业已加入
+				#ifdef DEBUG_LJL
+				printf("Jobs has been added\n");
+				#endif
+                kill(pid, SIGUSR1); //向子进程发信号，表示作业已加入
+				#ifdef DEBUG_LJL
+				printf("Signal has been sent to child from father\n");
+				#endif				
                 
                 //等待子进程输出
                 signal(SIGUSR1, setGoon);
                 while(goon == 0) ;
+				#ifdef DEBUG_LJL
+				printf("Out of the father's loop\n");
+				#endif
                 goon = 0;
             }else{ //非后台命令
                 fgPid = pid;
@@ -577,13 +620,13 @@ void execSimpleCmd(SimpleCmd *cmd){
                 printf("%d\t%d\t%s\t\t%s\n", i, now->pid, now->state, now->cmd);
             }
         }
-    } else if (strcmp(cmd->args[0], "cd") == 0) { //cd命令
+    } else if (strcmp(cmd->args[0], "cd") == 0) { //cd命令,这个为什么不是内部命令
         temp = cmd->args[1];
         if(temp != NULL){
             if(chdir(temp) < 0){
                 printf("cd; %s 错误的文件名或文件夹名！\n", temp);
             }
-        }
+        }//当输入格式正确的时候也没有做任何操作，这个命令的执行在哪里？
     } else if (strcmp(cmd->args[0], "fg") == 0) { //fg命令
         temp = cmd->args[1];
         if(temp != NULL && temp[0] == '%'){
