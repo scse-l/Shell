@@ -15,6 +15,7 @@
 #include "global.h"
 #define DEBUG
 #define DEBUG_LJL
+
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
 History history;                 //历史命令
@@ -94,6 +95,9 @@ void justArgs(char *str){
         }
         str[i] = '\0';
     }
+	#ifdef DEBUG_LJL
+		printf("Format of arguement has been changed\n");
+	#endif
 }
 
 /*设置goon*/
@@ -136,7 +140,9 @@ Job* addJob(pid_t pid){
         last->next = job;
         job->next = now;
     }
-    
+	#ifdef DEBUG_LJL
+		printf("Jobs has been added\n");
+	#endif
     return job;
 }
 
@@ -174,11 +180,42 @@ void rmJob(int sig, siginfo_t *sip, void* noused){
     free(now);
 }
 
+//组合键命令ctrl+C
+void ctrl_C()
+{
+
+	#ifdef DEBUG_LJL
+		printf("In the function ctrl_C\n");
+	#endif
+
+	if(fgPid == 0)
+	//没有前台作业，直接返回
+	{
+	#ifdef DEBUG_LJL
+		printf("No front job\n");
+	#endif
+		return ;
+	}
+
+	//输出相关信息
+	printf("The front job(Pis:%d) killed\n",fgPid);
+
+	kill(fgPid,SIGQUIT);//结束前台进程
+	fgPid = 0;//重置fgPid，表明没有前台作业
+
+}
+
 /*组合键命令ctrl+z*/
 void ctrl_Z(){
     Job *now = NULL;
     
+	#ifdef DEBUG_LJL
+		printf("In the function ctrl_Z\n");
+	#endif
     if(fgPid == 0){ //前台没有作业则直接返回
+	#ifdef DEBUG_LJL
+		printf("No front job\n");
+	#endif
         return;
     }
     
@@ -227,6 +264,7 @@ void fg_exec(int pid){
     strcpy(now->state, RUNNING);
     
     signal(SIGTSTP, ctrl_Z); //设置signal信号，为下一次按下组合键Ctrl+Z做准备
+    signal(SIGINT, ctrl_C); //设置signal信号，为下一次按下组合键Ctrl+C做准备
     i = strlen(now->cmd) - 1;
     while(i >= 0 && now->cmd[i] != '&')
 		i--;
@@ -339,6 +377,8 @@ void init(){
     action.sa_flags = SA_SIGINFO;
     sigaction(SIGCHLD, &action, NULL);
     signal(SIGTSTP, ctrl_Z);
+	signal(SIGUSR1, setGoon);
+	signal(SIGINT, ctrl_C);
 }
 
 /*******************************************************
@@ -395,10 +435,9 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                     if(!fileFinished){
                         k++;
                         temp = buff[k];
-						//是不是少了break语句?此处应该是接受下一个重定向的输入文件参数才对
                     }
                 }
-                temp = inputFile;//这句是什么意思呢？无论格式是什么样，此处都将temp指向了输入文件
+                temp = inputFile;
                 fileFinished = 1;
                 i++;
                 break;
@@ -495,13 +534,14 @@ void execOuterCmd(SimpleCmd *cmd){
     int pipeIn, pipeOut;
    
 	#ifdef DEBUG_LJL
+		Job *ptrJob;
 		printf("In the function execOuterCmd\n");
 	#endif
     if(exists(cmd->args[0])){ //命令存在
 
 		pid = fork();
         #ifdef DEBUG_LJL
-			printf("pid of child is %d\n",pid);
+			printf("pid of this is %d\n",getpid());
 		#endif
         if(pid < 0){
             perror("fork failed");
@@ -541,7 +581,7 @@ void execOuterCmd(SimpleCmd *cmd){
 				printf("Into the if-statement\n");
 				#endif
                 signal(SIGUSR1, setGoon); //收到信号，setGoon函数将goon置1，以跳出下面的循环
-                while(goon == 0) ; //等待父进程SIGUSR1信号，表示作业已加到链表中
+				while(goon == 0); //等待父进程SIGUSR1信号，表示作业已加到链表中
 				#ifdef DEBUG_LJL
 				printf("Out of the child's loop\n");
 				#endif
@@ -556,6 +596,9 @@ void execOuterCmd(SimpleCmd *cmd){
             }
             
             justArgs(cmd->args[0]);//修改第一个参数的格式，去掉'/'
+			#ifdef DEBUG_LJL
+				printf("cmdBuff is %s\n",cmdBuff);
+			#endif
             if(execv(cmdBuff, cmd->args) < 0){ //执行命令
                 printf("execv failed!\n");
                 return;
@@ -565,15 +608,24 @@ void execOuterCmd(SimpleCmd *cmd){
 		#ifdef DEBUG_LJL
 			printf("In the father\n");
 		#endif
-            if(cmd ->isBack){ //后台命令             
+            if(cmd ->isBack){ //后台命令      
                 fgPid = 0; //fgPid置0，为下一命令做准备
-                addJob(pid); //增加新的作业
 				#ifdef DEBUG_LJL
-				printf("Jobs has been added\n");
+					printf("The pid of child is %d\n",pid);
+				#endif
+                addJob(pid); //增加新的作业
+				//为什么有了这一个输出之后，子进程就运行了?
+				//但是父进程没有发送信号
+				#ifdef DEBUG_LJL
+					ptrJob = head;
+					while(ptrJob != NULL){
+						printf("Jobs: %s\n",ptrJob->cmd);
+						ptrJob = ptrJob->next;		
+					}
 				#endif
                 kill(pid, SIGUSR1); //向子进程发信号，表示作业已加入
 				#ifdef DEBUG_LJL
-				printf("Signal has been sent to child from father\n");
+				printf("Signal has been sent to child(pid:%d) from father\n",pid);
 				#endif				
                 
                 //等待子进程输出
@@ -620,13 +672,13 @@ void execSimpleCmd(SimpleCmd *cmd){
                 printf("%d\t%d\t%s\t\t%s\n", i, now->pid, now->state, now->cmd);
             }
         }
-    } else if (strcmp(cmd->args[0], "cd") == 0) { //cd命令,这个为什么不是内部命令
+    } else if (strcmp(cmd->args[0], "cd") == 0) {
         temp = cmd->args[1];
         if(temp != NULL){
             if(chdir(temp) < 0){
                 printf("cd; %s 错误的文件名或文件夹名！\n", temp);
             }
-        }//当输入格式正确的时候也没有做任何操作，这个命令的执行在哪里？
+        }
     } else if (strcmp(cmd->args[0], "fg") == 0) { //fg命令
         temp = cmd->args[1];
         if(temp != NULL && temp[0] == '%'){
