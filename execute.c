@@ -15,8 +15,8 @@
 
 #include "global.h"
 #define DEBUG
-//#define DEBUG_LJL
-//#define DEBUG_LJL_GLOB
+#define DEBUG_LJL
+#define DEBUG_LJL_GLOB
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
 History history;                 //历史命令
@@ -170,7 +170,11 @@ void rmJob(int sig, siginfo_t *sip, void* noused){
     if(now == NULL){ //作业不存在，则不进行处理直接返回
         return;
     }
-    
+
+	if(now->pid != fgPid)
+	{
+		wait(NULL);
+	}    
 	//开始移除该作业
     if(now == head){
         head = now->next;
@@ -211,7 +215,7 @@ void ctrl_Z(){
     Job *now = NULL;
     
 	#ifdef DEBUG_LJL
-		printf("In the function ctrl_Z\n");
+		printf("In the function ctrl_Z,fgPid:%d\n",fgPid);
 	#endif
     if(fgPid == 0){ //前台没有作业则直接返回
 	#ifdef DEBUG_LJL
@@ -379,9 +383,7 @@ void init(){
     sigaction(SIGCHLD, &action, NULL);
     signal(SIGTSTP, ctrl_Z);
 	signal(SIGUSR1, setGoon);
-#ifndef DEBUG_LJL
 	signal(SIGINT, ctrl_C);
-#endif
 }
 
 /*******************************************************
@@ -590,7 +592,6 @@ void execOuterCmd(SimpleCmd *cmd){
 				#endif
                 goon = 0; //置0，为下一命令做准备
                 
-				//后台命令的时候并没有这一行输出，问题是：没有子进程在运行
                 printf("[%d]\t%s\t\t%s\n", getpid(), RUNNING, inputBuff);
                 kill(getppid(), SIGUSR1);//这里的函数是getppid()，是取得父进程的进程id，即这句是向父进程发送信号
 				#ifdef DEBUG_LJL
@@ -642,6 +643,7 @@ void execOuterCmd(SimpleCmd *cmd){
             }else{ //非后台命令
                 fgPid = pid;
                 waitpid(pid, NULL, 0);
+				fgPid = 0;
             }
 		}
     }else{ //命令不存在
@@ -656,7 +658,7 @@ void execSimpleCmd(SimpleCmd *cmd){
     char *temp;
     Job *now = NULL;
 	glob_t globbuf;
-	  
+	printf("hehehehe %s\n",cmd->args[0]);
 	if(strcmp(cmd->args[0], "exit") == 0) { //exit命令
         exit(0);
     } else if (strcmp(cmd->args[0], "history") == 0) { //history命令
@@ -714,6 +716,7 @@ void execSimpleCmd(SimpleCmd *cmd){
 		#endif
 		//实现通配符
 		//参数列表中是否存在通配符
+		//printf("%s\n",cmd->args[0]);
 		while(cmd->args[i] != NULL)
 		{
 			#ifdef DEBUG_LJL_GLOB
@@ -803,7 +806,7 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 		printf("value of gl_pathc: %d\n",gl_pathc);		
 	#endif
 	//为合并后的数组分配空间
-	merge = (char **)malloc(sizeof(char) * (length + gl_pathc+1));
+	merge = (char **)malloc(sizeof(char*) * (length + gl_pathc+1));
 
 	#ifdef DEBUG_LJL_GLOB
 		printf("Former length: %d\n",i);
@@ -815,14 +818,17 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 		printf("Loop %d: Former arguements %d has been copied from %s to ",tmp,tmp,cmd->args[tmp]);
 	#endif
 		merge[tmp] = (char *)malloc(sizeof(char) * (strlen(cmd->args[tmp]) + 1));
-		//strcpy(merge[tmp],cmd->args[tmp]);
-		merge[tmp] = cmd->args[tmp];		
+		//merge[tmp][strlen(cmd->args[tmp])] = 0;
+		strcpy(merge[tmp],cmd->args[tmp]);
+		merge[tmp][strlen(cmd->args[tmp])] = 0;
+		//merge[tmp] = cmd->args[tmp];		
 		//free(cmd->args[tmp]);
-		tmp++;
+		
 	#ifdef DEBUG_LJL_GLOB
 		printf("%s\n",merge[tmp]);
 		printf("length of cmd->args[%d] and merge[%d]: %d  %d\n",tmp,tmp,strlen(cmd->args[tmp]),strlen(merge[tmp]));
 	#endif
+	tmp++;
 	}
 
 	_tmp = 0;
@@ -833,6 +839,8 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 	#ifdef DEBUG_LJL_GLOB
 		printf("Replacing length: %d\n",gl_pathc);
 	#endif
+	printf("%d\n",tmp);
+	printf("%s\n",merge[0]);
 	//拷贝匹配通配符表达式的文件名
 	while(_tmp < gl_pathc)
 	{
@@ -848,6 +856,7 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 	#ifdef DEBUG_LJL_GLOB
 		printf("later length: %d\n",length);
 	#endif
+	printf("%s\n",merge[0]);
 	_tmp = i;//记录下含有通配符的表达式的位置以供返回
 	i++;//跳过含有通配符的表达式
 	#ifdef DEBUG_LJL_GLOB
@@ -860,7 +869,9 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 		printf("Later arguements: %d\n",tmp) ;
 	#endif
 		merge[tmp] = (char *)malloc(sizeof(char) * (strlen(cmd->args[i]) + 1));
+		merge[tmp][strlen(cmd->args[i])+1] = 0;
 		strcpy(merge[tmp],cmd->args[i]);
+		merge[tmp][strlen(cmd->args[i])+1] = 0;
 		//free(cmd->args[i]);
 		i++;
 		tmp++;
@@ -870,11 +881,18 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 	#ifdef DEBUG_LJL_GLOB
 		getchar();
 	#endif
-	free(cmd->args);
+	//free(cmd->args);
 	#ifdef DEBUG_LJL_GLOB
 		getchar();
 	#endif
-	cmd->args = merge;
+	//cmd->args = merge;
+	for (i = 0; merge[i] != NULL; i++)
+	{
+		cmd->args[i] = malloc(sizeof(char) * (strlen(merge[i])+1));
+		cmd->args[i][strlen(merge[i])] = 0;
+		strcpy(cmd->args[i],merge[i]);
+		cmd->args[i][strlen(merge[i])] = 0;
+	}
 	#ifdef DEBUG_LJL_GLOB
 		getchar();
 	#endif
