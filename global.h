@@ -19,6 +19,7 @@ extern "C" {
         char **args;    // 命令及参数
         char *input;    // 输入重定向
         char *output;   // 输出重定向
+		struct SimpleCmd *next;  //管道的下一条指令
     } SimpleCmd;
 
     typedef struct History {

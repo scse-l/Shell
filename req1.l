@@ -7,5 +7,5 @@
 "<" {return '<';}
 "|" {return '|';}
 "&" {return '&';}
-[^><&\t \|]+ {return STRING;}
+[^><&\t |]+ {return STRING;}
 %%

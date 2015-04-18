@@ -15,8 +15,11 @@
 
 #include "global.h"
 #define DEBUG
-#define DEBUG_LJL
-#define DEBUG_LJL_GLOB
+//#define DEBUG_LJL
+//#define DEBUG_LJL_GLOB
+//#define DEBUG_LJL_PIPE
+
+#define FIFO "/tmp/my_fifo"
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
 History history;                 //历史命令
@@ -392,13 +395,16 @@ void init(){
 SimpleCmd* handleSimpleCmdStr(int begin, int end){
     int i, j, k;
     int fileFinished; //记录命令是否解析完毕
+	int pipeCmdFinished;  //记录管道命令是否解析完毕
     char c, buff[10][40], inputFile[30], outputFile[30], *temp = NULL;
     SimpleCmd *cmd = (SimpleCmd*)malloc(sizeof(SimpleCmd));
-    
+    SimpleCmd *testCmd;
+
+
 	//默认为非后台命令，输入输出重定向为null
     cmd->isBack = 0;
     cmd->input = cmd->output = NULL;
-    
+    cmd->next = NULL;
     //初始化相应变量
     for(i = begin; i<10; i++){
         buff[i][0] = '\0';
@@ -407,22 +413,34 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
     outputFile[0] = '\0';
     
     i = begin;
+
 	//跳过空格等无用信息
     while(i < end && (inputBuff[i] == ' ' || inputBuff[i] == '\t')){
+
         i++;
     }
-    
+
     k = 0;
     j = 0;
     fileFinished = 0;
+	pipeCmdFinished = 0;
 	//buff存的是命令的各个参数
     temp = buff[k]; //以下通过temp指针的移动实现对buff[i]的顺次赋值过程
-    while(i < end){
+	#ifdef DEBUG_LJL_PIPE
+		printf("value of i and end: %d  %d\ninputBuff: ",i,end);
+	#endif
+    while(i < end && !pipeCmdFinished){
+		#ifdef DEBUG_LJL_PIPE
+			printf("%c",inputBuff[i]);
+		#endif
 		/*根据命令字符的不同情况进行不同的处理*/
-        switch(inputBuff[i]){ 
+        switch(inputBuff[i]){
             case ' ':
             case '\t': //命令名及参数的结束标志
                 temp[j] = '\0';
+				#ifdef DEBUG_LJL_PIPE
+					printf("%s\n",temp);
+				#endif
                 j = 0;
                 if(!fileFinished){
                     k++;
@@ -432,6 +450,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
 
 			//不明白的部分
             case '<': //输入重定向标志
+				//printf("In the case '<'\n");
                 if(j != 0){
 		  		  	//此判断为防止命令直接挨着<符号导致判断为同一个参数，如果ls<sth
 					//这种情况就是命令后紧接着<字符                    
@@ -443,6 +462,9 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                     }
                 }
                 temp = inputFile;
+				#ifdef DEBUG_LJL_PIPE
+					printf("%s\n",temp);
+				#endif
                 fileFinished = 1;
                 i++;
                 break;
@@ -458,6 +480,9 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                     }
                 }
                 temp = outputFile;
+				#ifdef DEBUG_LJL_PIPE
+					printf("%s\n",temp);
+				#endif
                 fileFinished = 1;
                 i++;
                 break;
@@ -465,6 +490,9 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
             case '&': //后台运行标志，实现方法保证了无论&符号在命令前还是后，都能正确执行
                 if(j != 0){
                     temp[j] = '\0';
+					#ifdef DEBUG_LJL_PIPE
+						printf("%s\n",temp);
+					#endif
                     j = 0;
                     if(!fileFinished){
                         k++;
@@ -475,7 +503,38 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
                 fileFinished = 1;
                 i++;
                 break;
-                
+
+	 		case '|'://管道指令的标志
+					if(j!=0){
+						#ifdef DEBUG_LJL_PIPE
+							printf("when '|',temp[j-1]=%c\n",temp[j-1]);
+							printf("inputFile[0]=%c\n",inputFile[0]);
+						#endif
+						temp[j]='\0';
+						j=0;
+						if(!fileFinished){
+							k++;
+							temp=buff[k];
+						}
+					}
+					i++;
+					#ifdef DEBUG_LJL_PIPE
+						printf("pipe: %d\n",i);
+					#endif
+					cmd->next=handleSimpleCmdStr(i, end);
+
+					#ifdef DEBUG_LJL_PIPE
+						testCmd = cmd;					
+//						if(cmd != NULL)
+//							printf("PipeCmd : %s",cmd->args[0]);
+//						printf("%d\n",cmd);
+//						getchar();
+
+					#endif
+					fileFinished=1;
+					pipeCmdFinished=1;
+					break;
+
             default: //默认则读入到temp指定的空间
                 temp[j++] = inputBuff[i++];
                 continue;
@@ -486,6 +545,9 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
             i++;
         }
 	}
+	#ifdef DEBUG_LJL_PIPE
+		printf("\n");
+	#endif
     
 	//这是在处理什么情况呢？
     if(inputBuff[end-1] != ' ' && inputBuff[end-1] != '\t' && inputBuff[end-1] != '&'){
@@ -507,6 +569,7 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
 	//如果有输入重定向文件，则为命令的输入重定向变量赋值
     if(strlen(inputFile) != 0){
         j = strlen(inputFile);
+		//printf("cnmb\n");
         cmd->input = (char*)malloc(sizeof(char) * (j + 1));
         strcpy(cmd->input, inputFile);
     }
@@ -525,8 +588,13 @@ SimpleCmd* handleSimpleCmdStr(int begin, int end){
 	}
     printf("input: %s\n",cmd->input);
     printf("output: %s\n",cmd->output);
+	printf("next: %d\n",cmd->next);
     printf("****\n");
     #endif
+	#ifdef DEBUG_LJL_PIPE
+		printf("cmd: %d\n",cmd);
+	#endif
+    
     return cmd;
 }
 
@@ -543,7 +611,6 @@ void execOuterCmd(SimpleCmd *cmd){
 		printf("In the function execOuterCmd\n");
 	#endif
     if(exists(cmd->args[0])){ //命令存在
-
 		pid = fork();
         #ifdef DEBUG_LJL
 			printf("pid of this is %d\n",getpid());
@@ -658,7 +725,8 @@ void execSimpleCmd(SimpleCmd *cmd){
     char *temp;
     Job *now = NULL;
 	glob_t globbuf;
-	printf("hehehehe %s\n",cmd->args[0]);
+
+//	printf("cmd->args[0] is: %s\n",cmd->args[0]);
 	if(strcmp(cmd->args[0], "exit") == 0) { //exit命令
         exit(0);
     } else if (strcmp(cmd->args[0], "history") == 0) { //history命令
@@ -711,12 +779,13 @@ void execSimpleCmd(SimpleCmd *cmd){
             printf("bg; 参数不合法，正确格式为：bg %%<int>\n");
         }
     } else{ //外部命令
-		#ifdef DEBUG_LJL_GLOB
-			printf("Outer cmd\n");
+		#ifdef DEBUG_LJL
+			printf("Outer Cmd\n");
 		#endif
 		//实现通配符
 		//参数列表中是否存在通配符
 		//printf("%s\n",cmd->args[0]);
+		i = 0;
 		while(cmd->args[i] != NULL)
 		{
 			#ifdef DEBUG_LJL_GLOB
@@ -758,6 +827,74 @@ void execSimpleCmd(SimpleCmd *cmd){
     }
 	free(cmd->input);
     free(cmd->output);
+}
+
+//管道
+int execPipeCmd(SimpleCmd *cmd1,SimpleCmd *cmd2){
+	int status;
+	int pid[2];
+	int pipe_fd[2];
+	
+	//创建管道
+	if(pipe(pipe_fd)<0){
+		perror("pipe failed");
+		return -1;
+	}
+	unlink(FIFO);
+	mkfifo(FIFO,0666);
+	//为cmd1创建进程
+	if((pid[0]=fork())<0){
+		perror("fork failed");
+		return -1;
+	}
+	if(!pid[0]){
+		/*子进程*/
+		#ifdef DEBUG_LJL_PIPE
+			printf("In the cmd1\n");
+		#endif
+		
+		/*将管道的写描述符复制给标准输出，然后关闭*/
+		int out = open(FIFO,O_WRONLY);
+			if(cmd1->input != NULL)
+				{
+					int in = open(cmd1->input,O_RDONLY,S_IREAD|S_IWRITE);
+					printf("cmd1->input is not NULL\n");
+					dup2(in,STDIN_FILENO);
+				}
+		dup2(out,STDOUT_FILENO);
+		/*执行cmd1*/
+		execSimpleCmd(cmd1);
+		exit(0);
+	}
+	if(pid[0]){
+		/*父进程*/
+		//waitpid(pid[0],&status,0);
+		/*为cmd2创建子进程*/
+		if((pid[1]=fork())<0){
+			perror("fork failed");
+			return -1;
+		}
+		if(!pid[1]){
+			/*子进程*/
+			#ifdef DEBUG_LJL_PIPE
+				printf("In the cmd2\n");
+			#endif
+		
+			/*将管道的读描述符复制给标准输入*/
+			
+			/*执行cmd2*/
+//			printf("execute cmd2\n");
+			int in = open(FIFO,O_RDONLY);
+
+				dup2(in,STDIN_FILENO);
+			
+			execSimpleCmd(cmd2);
+			exit(0);
+		}
+		waitpid(pid[0],&status,0);
+		waitpid(pid[1],&status,0);
+	}
+	return 0;
 }
 
 /*******************************************************
@@ -839,8 +976,8 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 	#ifdef DEBUG_LJL_GLOB
 		printf("Replacing length: %d\n",gl_pathc);
 	#endif
-	printf("%d\n",tmp);
-	printf("%s\n",merge[0]);
+	//printf("%d\n",tmp);
+	//printf("%s\n",merge[0]);
 	//拷贝匹配通配符表达式的文件名
 	while(_tmp < gl_pathc)
 	{
@@ -856,7 +993,7 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 	#ifdef DEBUG_LJL_GLOB
 		printf("later length: %d\n",length);
 	#endif
-	printf("%s\n",merge[0]);
+	//printf("%s\n",merge[0]);
 	_tmp = i;//记录下含有通配符的表达式的位置以供返回
 	i++;//跳过含有通配符的表达式
 	#ifdef DEBUG_LJL_GLOB
@@ -914,7 +1051,24 @@ int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
 ********************************************************/
 void execute(){
     SimpleCmd *cmd = handleSimpleCmdStr(0, strlen(inputBuff));
-    execSimpleCmd(cmd);
+
+	if(cmd->next!=NULL){
+	//是管道指令
+	#ifdef DEBUG_LJL_PIPE
+		printf("Pipe Cmd \n");
+	#endif
+		if(execPipeCmd(cmd,cmd->next)){
+			printf("Error occurs when execute pipe command\n");
+			return ;
+		}
+	}
+	else{
+	//不是管道指令
+	#ifdef DEBUG_LJL_PIPE
+		printf("SimpleCmd\n");
+	#endif
+		execSimpleCmd(cmd);
+	}
 }
 /*
 void execute_pipe()
