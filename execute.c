@@ -15,7 +15,7 @@
 
 #include "global.h"
 #define DEBUG
-#define DEBUG_LJL
+//#define DEBUG_LJL
 //#define DEBUG_LJL_GLOB
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
@@ -898,3 +898,12 @@ void execute(){
     SimpleCmd *cmd = handleSimpleCmdStr(0, strlen(inputBuff));
     execSimpleCmd(cmd);
 }
+/*
+void execute_pipe()
+{
+	SimpleCmd *cmd = handleSimpleCmdStr(0,strlen(inputBuff));
+
+
+
+}
+*/
