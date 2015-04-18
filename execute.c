@@ -11,11 +11,12 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <sys/termios.h>
+#include <glob.h>
 
 #include "global.h"
 #define DEBUG
 #define DEBUG_LJL
-
+//#define DEBUG_LJL_GLOB
 int goon = 0, ingnore = 0;       //用于设置signal信号量
 char *envPath[10], cmdBuff[40];  //外部命令的存放路径及读取外部命令的缓冲空间
 History history;                 //历史命令
@@ -378,7 +379,9 @@ void init(){
     sigaction(SIGCHLD, &action, NULL);
     signal(SIGTSTP, ctrl_Z);
 	signal(SIGUSR1, setGoon);
+#ifndef DEBUG_LJL
 	signal(SIGINT, ctrl_C);
+#endif
 }
 
 /*******************************************************
@@ -594,7 +597,8 @@ void execOuterCmd(SimpleCmd *cmd){
 				printf("Signal has been sent to father from child\n");
 				#endif
             }
-            
+
+
             justArgs(cmd->args[0]);//修改第一个参数的格式，去掉'/'
 			#ifdef DEBUG_LJL
 				printf("cmdBuff is %s\n",cmdBuff);
@@ -648,14 +652,17 @@ void execOuterCmd(SimpleCmd *cmd){
 /*执行命令*/
 void execSimpleCmd(SimpleCmd *cmd){
     int i, pid;
+	int pipeIn,pipeOut;
     char *temp;
     Job *now = NULL;
-    
-    if(strcmp(cmd->args[0], "exit") == 0) { //exit命令
+	glob_t globbuf;
+	  
+	if(strcmp(cmd->args[0], "exit") == 0) { //exit命令
         exit(0);
     } else if (strcmp(cmd->args[0], "history") == 0) { //history命令
         if(history.end == -1){
             printf("尚未执行任何命令\n");
+			dup2(pipeOut,1);
             return;
         }
         i = history.start;
@@ -702,15 +709,186 @@ void execSimpleCmd(SimpleCmd *cmd){
             printf("bg; 参数不合法，正确格式为：bg %%<int>\n");
         }
     } else{ //外部命令
+		#ifdef DEBUG_LJL_GLOB
+			printf("Outer cmd\n");
+		#endif
+		//实现通配符
+		//参数列表中是否存在通配符
+		while(cmd->args[i] != NULL)
+		{
+			#ifdef DEBUG_LJL_GLOB
+				printf("In the Loop,time: %d\n",i);
+			#endif
+			if(globExist(cmd->args[i]))
+			{
+			//当前参数存在通配符
+			#ifdef DEBUG_LJL_GLOB
+				printf("globExitst is true\n");
+				getchar();			
+			#endif
+				//查找通配符的匹配
+				if(glob(cmd->args[i],GLOB_NOCHECK,NULL,&globbuf) == 0)
+				{
+				//成功匹配
+					//用匹配到的文件名替换原来含有通配符的表达式
+					i = replace(cmd,i,globbuf.gl_pathc,globbuf.gl_pathv);
+					#ifdef DEBUG_LJL_GLOB
+						//调试用，pid在此处仅为临时变量
+						pid = 0;
+						while(cmd->args[pid] != NULL)
+						{
+							printf("New arguements: %d  %s\n",pid,cmd->args[pid]);
+							pid++;
+						}						
+					#endif
+					globfree(&globbuf);
+				}
+			}
+			i++;
+		}
         execOuterCmd(cmd);
     }
-    
+
     //释放结构体空间
     for(i = 0; cmd->args[i] != NULL; i++){
         free(cmd->args[i]);
-        free(cmd->input);
-        free(cmd->output);
     }
+	free(cmd->input);
+    free(cmd->output);
+}
+
+/*******************************************************
+                     通配符处理
+********************************************************/
+//检查字符串中是否存在通配符
+int globExist(char *arg)
+{
+	#ifdef DEBUG_LJL_GLOB
+		printf("In the globExist function,string: %s\n",arg);
+	#endif
+	int i = 0;
+
+	if(arg[0] == '-')
+	{
+	//是命令参数
+		return 0;
+	}
+
+	while(arg[i] != '\0')
+	{
+		if(arg[i] == '*' || arg[i] == '?')
+			return 1;
+		i++;
+	}
+
+	return 0;
+}
+
+//字符串替换函数，用于用匹配的文件名替换含有通配符的表达式
+//返回修改后匹配的最后文件名所在的位置
+int replace(SimpleCmd *cmd,int i,int gl_pathc,char **gl_pathv)
+
+{
+	int tmp = 0,_tmp = 0;
+	int length = 0;
+	char **merge = NULL;
+
+	//获得args数组本身的长度
+	while(cmd->args[length] != NULL)
+	{
+		length++;
+	}
+	#ifdef DEBUG_LJL_GLOB
+		printf("value of length: %d\n",length);
+		printf("value of gl_pathc: %d\n",gl_pathc);		
+	#endif
+	//为合并后的数组分配空间
+	merge = (char **)malloc(sizeof(char) * (length + gl_pathc+1));
+
+	#ifdef DEBUG_LJL_GLOB
+		printf("Former length: %d\n",i);
+	#endif
+	//拷贝含有通配符的表达式之前的参数
+	while(tmp < i)
+	{
+	#ifdef DEBUG_LJL_GLOB
+		printf("Loop %d: Former arguements %d has been copied from %s to ",tmp,tmp,cmd->args[tmp]);
+	#endif
+		merge[tmp] = (char *)malloc(sizeof(char) * (strlen(cmd->args[tmp]) + 1));
+		//strcpy(merge[tmp],cmd->args[tmp]);
+		merge[tmp] = cmd->args[tmp];		
+		//free(cmd->args[tmp]);
+		tmp++;
+	#ifdef DEBUG_LJL_GLOB
+		printf("%s\n",merge[tmp]);
+		printf("length of cmd->args[%d] and merge[%d]: %d  %d\n",tmp,tmp,strlen(cmd->args[tmp]),strlen(merge[tmp]));
+	#endif
+	}
+
+	_tmp = 0;
+	#ifdef DEBUG_LJL_GLOB
+		tmp = i;
+	#endif
+
+	#ifdef DEBUG_LJL_GLOB
+		printf("Replacing length: %d\n",gl_pathc);
+	#endif
+	//拷贝匹配通配符表达式的文件名
+	while(_tmp < gl_pathc)
+	{
+	#ifdef DEBUG_LJL_GLOB
+		printf("Replacing: %d %s\n",tmp,gl_pathv[_tmp]);
+	#endif
+		merge[tmp] = (char *)malloc(sizeof(char) * (strlen(gl_pathv[_tmp]) + 1));
+		strcpy(merge[tmp],gl_pathv[_tmp]);
+		_tmp++;
+		tmp++;
+	}
+
+	#ifdef DEBUG_LJL_GLOB
+		printf("later length: %d\n",length);
+	#endif
+	_tmp = i;//记录下含有通配符的表达式的位置以供返回
+	i++;//跳过含有通配符的表达式
+	#ifdef DEBUG_LJL_GLOB
+		printf("value of i: %d\n",i);
+	#endif
+	//拷贝剩下还未处理的参数
+	while(i < length)
+	{
+	#ifdef DEBUG_LJL_GLOB
+		printf("Later arguements: %d\n",tmp) ;
+	#endif
+		merge[tmp] = (char *)malloc(sizeof(char) * (strlen(cmd->args[i]) + 1));
+		strcpy(merge[tmp],cmd->args[i]);
+		//free(cmd->args[i]);
+		i++;
+		tmp++;
+	}
+	merge[tmp] = NULL;
+
+	#ifdef DEBUG_LJL_GLOB
+		getchar();
+	#endif
+	free(cmd->args);
+	#ifdef DEBUG_LJL_GLOB
+		getchar();
+	#endif
+	cmd->args = merge;
+	#ifdef DEBUG_LJL_GLOB
+		getchar();
+	#endif
+	#ifdef DEBUG_LJL_GLOB
+		i = 0;
+		while(merge[i] != NULL)
+		{
+			printf("In the last loop,time: %d\n",i);
+			printf("Replaced args[%d]: %s\n",i,cmd->args[i]);
+			i++;
+		}
+	#endif
+	return _tmp;
+
 }
 
 /*******************************************************
